@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    options {
+        durabilityHint 'MAX_SURVIVABILITY'   // ⭐ ป้องกัน Jenkins restart kill pipeline
+        timeout(time: 60, unit: 'MINUTES')   // กัน build ค้างตาย
+        timestamps()                         // Log อ่านง่ายขึ้น
+    }
+
     triggers {
         pollSCM('H/2 * * * *')
     }
@@ -28,7 +34,8 @@ pipeline {
             steps {
                 script {
                     checkout scm
-                    env.GIT_COMMIT_SHORT = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    env.GIT_COMMIT_SHORT = sh(returnStdout: true,
+                        script: 'sleep 1 && git rev-parse --short HEAD').trim()
                     echo "Commit: ${env.GIT_COMMIT_SHORT}"
                 }
             }
@@ -39,7 +46,7 @@ pipeline {
                 script {
                     withCredentials([
                         string(credentialsId: 'MYSQL_ROOT_PASSWORD', variable: 'MYSQL_ROOT_PASS'),
-                        string(credentialsId: 'MYSQL_PASSWORD',      variable: 'MYSQL_PASS')
+                        string(credentialsId: 'MYSQL_PASSWORD', variable: 'MYSQL_PASS')
                     ]) {
 
                         writeFile file: '.env', text: """\
@@ -68,7 +75,7 @@ TZ=Asia/Bangkok
             steps {
                 script {
                     echo "Validating Docker Compose..."
-                    sh 'docker compose config'
+                    sh 'sleep 1 && docker compose config'
                 }
             }
         }
@@ -76,14 +83,17 @@ TZ=Asia/Bangkok
         stage('Deploy') {
             steps {
                 script {
-                    def downCmd = params.CLEAN_VOLUMES ? 
+                    def downCmd = params.CLEAN_VOLUMES ?
                         "docker compose down -v" :
                         "docker compose down"
 
-                    sh downCmd
+                    // ⭐ sleep 1 ป้องกัน wrapper script error
+                    sh "sleep 1 && ${downCmd}"
 
                     sh """
+                        sleep 1
                         docker compose build --no-cache
+                        sleep 1
                         docker compose up -d
                     """
 
@@ -98,8 +108,8 @@ TZ=Asia/Bangkok
                     echo "Waiting for API…"
                     sh 'sleep 15'
 
-                    // Use service hostname inside compose network
                     sh """
+                        sleep 1
                         timeout 60 bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done'
                         curl -f http://localhost:3001/attractions
                         echo "Health check OK!"
@@ -112,12 +122,13 @@ TZ=Asia/Bangkok
             steps {
                 script {
                     sh """
+                        sleep 1
                         docker compose ps
                         echo "=== Logs ==="
                         docker compose logs --tail=20
 
-                        echo "Frontend: http://localhost:3000"
-                        echo "API: http://localhost:3001"
+                        echo "Frontend:  http://localhost:3000"
+                        echo "API:        http://localhost:3001"
                         echo "phpMyAdmin: http://localhost:8888"
                     """
                 }
@@ -131,10 +142,11 @@ TZ=Asia/Bangkok
         }
         failure {
             echo "Deployment failed — showing logs"
-            sh 'docker compose logs --tail=50 || true'
+            sh 'sleep 1 && docker compose logs --tail=50 || true'
         }
         always {
             sh """
+                sleep 1
                 docker image prune -f
                 docker container prune -f
             """
